@@ -26,6 +26,7 @@ from pprint import *
 # verify the CRC
 
 
+# These are 4-bit to 5-bit encoding of data bit nibbles to Manchester symbols.
 encoding_lookup = {
     0B0000: 0B11110,
     0B0001: 0B01001,
@@ -45,14 +46,24 @@ encoding_lookup = {
     0B1111: 0B11101,
 }
 
+# These 5-bit symbols are not in the 4b-5b encoding table above intentionally, so they are not decoded as data but used as framing markers.
+# 
+# Sync-1: 11000
+# Sync-2: 10001
+# Sync-3  00110
+# RST-1:  00111
+# RST-2:  11001
+# EOP:    01101
+
+# These Ordered Sets are used to mark the recipient of a packet that silicon can trigger on. They come right after the preamble.
 addresses = {
-    'SOP': [1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1],
-    'SOP\'': [1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0],
-    'SOP\'\'': [1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0],
-    'Hard Reset': [0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1],
-    'Cable Reset': [0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0],
-    'SOP\'_debug': [1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0],
-    'SOP\'\'_debug': [1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1],
+    'SOP':           [1, 1, 0, 0, 0,   1, 1, 0, 0, 0,   1, 1, 0, 0, 0,   1, 0, 0, 0, 1], # Sync-1 Sync-1 Sync-1 Sync-2
+    'SOP\'':         [1, 1, 0, 0, 0,   1, 1, 0, 0, 0,   0, 0, 1, 1, 0,   0, 0, 1, 1, 0], # Sync-1 Sync-1 Sync-3 Sync-3
+    'SOP\'\'':       [1, 1, 0, 0, 0,   0, 0, 1, 1, 0,   1, 1, 0, 0, 0,   0, 0, 1, 1, 0], # Sync-1 Sync-3 Sync-1 Sync-3
+    'Hard Reset':    [0, 0, 1, 1, 1,   0, 0, 1, 1, 1,   0, 0, 1, 1, 1,   1, 1, 0, 0, 1], # RST-1  RST-1  RST-1  RST-2
+    'Cable Reset':   [0, 0, 1, 1, 1,   1, 1, 0, 0, 0,   0, 0, 1, 1, 1,   0, 0, 1, 1, 0], # RST-1  Sync-1 RST-1  Sync-3
+    'SOP\'_debug':   [1, 1, 0, 0, 0,   1, 1, 0, 0, 1,   1, 1, 0, 0, 1,   0, 0, 1, 1, 0], # Sync-1 RST-2  RST-2  Sync-3
+    'SOP\'\'_debug': [1, 1, 0, 0, 0,   1, 1, 0, 0, 1,   0, 0, 1, 1, 0,   1, 0, 0, 0, 1], # Sync-1 RST-2  Sync-3 Sync-3
 }
 
 data_commands = {
@@ -65,10 +76,10 @@ data_commands = {
     0b00110: 'Alert',
     0b00111: 'Get_Country_Info',
     0b01000: 'Enter_USB',
-    0b01001: 'Reserved',
-    0b01010: 'Reserved',
-    0b01011: 'Reserved',
-    0b01100: 'Reserved',
+    0b01001: 'EPR_Request',
+    0b01010: 'EPR_Mode',
+    0b01011: 'Source_Info',
+    0b01100: 'Revision',
     0b01101: 'Reserved',
     0b01110: 'Reserved',
     0b01111: 'VDM',
@@ -114,8 +125,8 @@ control_commands = {
     0b10100: 'Get_PPS_Status',
     0b10101: 'Get_Country_Codes',
     0b10110: 'Get_Sink_Cap_extended',
-    0b10111: 'Reserved',
-    0b11000: 'Reserved',
+    0b10111: 'Get_Source_Info',
+    0b11000: 'Get_Revision',
     0b11001: 'Reserved',
     0b11010: 'Reserved',
     0b11011: 'Reserved',
@@ -137,7 +148,7 @@ cable_plug = {
 revision = {
     0: '1.0',
     1: '2.0',
-    2: 'Reserved',
+    2: '3.0',
     3: 'Reserved'
 }
 
@@ -270,7 +281,7 @@ class Hla(HighLevelAnalyzer):
                     print("SOP ", end = "")
                 elif address_cmd == 'SOP\'' : 
                     print("SOP'", end = "")
-                else : 
+                else: 
                     print("SOP\"", end = "")
             next = yield AnalyzerFrame('address', address_word.start_time, address_word.end_time, {'address': address_cmd})
 
@@ -286,12 +297,12 @@ class Hla(HighLevelAnalyzer):
                     print("Source ", end = "")
                 else: 
                     print("Sink   ", end = "")
-            else :
+            else:
                 print(" Cable      ", end = "")
             next = yield AnalyzerFrame('header', header_word.start_time, header_word.end_time, header_data)
 
             if object_count == 0 : 
-                print(header_data['command_code'], end = "")
+                print(header_data['command_code'])
 
             for object_index in range(object_count):
                 object_word = yield from self.get_bits(next, 40)
@@ -306,16 +317,28 @@ class Hla(HighLevelAnalyzer):
                     data_object_data['index'] = object_index
                     data_object_data['raw'] = hex(object_int)
                     self.source_capabilities_pdo_types[object_index] = data_object_data['pdo_type']
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("                         ", end = "")
+                    print(header_data['command_code'], "PDO",object_index+1)
+                    if self.print_setting == 'Detailed' : 
+                        pprint(data_object_data, indent=13)
                 elif header_data['command_code'] == 'Request':
                     object_position = (object_int >> 28) & 0x7
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("                         ", end = "")
+                    print(header_data['command_code'])
                     if len(self.source_capabilities_pdo_types) >= object_position:
                         source_capabilities_pdo_type = self.source_capabilities_pdo_types[object_position-1]
                         frame_type, data_object_data = decode_request_data_object(object_int, source_capabilities_pdo_type)
                         data_object_type = frame_type
                         data_object_data['index'] = object_index
                         data_object_data['raw'] = hex(object_int)
+                        if self.print_setting == 'Detailed' : 
+                            pprint(data_object_data, indent=13)
+                        else:
+                            print("            ", end = "")
+                            print("             RDO", hex(object_int))
+
                     else:
                         data_object_type = 'error'
                         data_object_data = { 'error': '"Request" for object position "{}" received without "Source_Capabilities" message observed first'.format(str(object_position)), 'raw': hex(object_int) }
@@ -324,45 +347,81 @@ class Hla(HighLevelAnalyzer):
                     data_object_type = frame_type
                     data_object_data['index'] = object_index
                     data_object_data['raw'] = hex(object_int)
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("                         ", end = "")
+                    print(header_data['command_code'])
+                    if self.print_setting == 'Detailed' : 
+                        pprint(data_object_data, indent=13)
                 elif header_data['command_code'] == 'Sink_Capabilities':
                     frame_type, data_object_data = decode_sink_power_data_object(object_int)
                     data_object_type = frame_type
                     data_object_data['index'] = object_index
                     data_object_data['raw'] = hex(object_int)
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("                         ", end = "")
+                    print(header_data['command_code'], "PDO",object_index+1)
+                    if self.print_setting == 'Detailed' : 
+                        pprint(data_object_data, indent=13)
                 elif header_data['command_code'] == 'Battery_Status':
                     frame_type, data_object_data = decode_battery_status_data_object(object_int)
                     data_object_type = frame_type
                     data_object_data['index'] = object_index
                     data_object_data['raw'] = hex(object_int)
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("                         ", end = "")
+                    print(header_data['command_code'])
+                    if self.print_setting == 'Detailed' : 
+                        pprint(data_object_data, indent=13)
                 elif header_data['command_code'] == 'Alert':
                     frame_type, data_object_data = decode_alert_data_object(object_int)
                     data_object_type = frame_type
                     data_object_data['index'] = object_index
                     data_object_data['raw'] = hex(object_int)
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("                         ", end = "")
+                    print(header_data['command_code'])
+                    if self.print_setting == 'Detailed' : 
+                        pprint(data_object_data, indent=13)
                 elif header_data['command_code'] == 'Get_Country_Info':
                     frame_type, data_object_data = decode_get_country_info_data_object(object_int)
                     data_object_type = frame_type
                     data_object_data['index'] = object_index
                     data_object_data['raw'] = hex(object_int)
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("                         ", end = "")
+                    print(header_data['command_code'])
+                    if self.print_setting == 'Detailed' : 
+                        pprint(data_object_data, indent=13)
                 elif header_data['command_code'] == 'Enter_USB':
                     frame_type, data_object_data = decode_enter_usb_data_object(object_int)
                     data_object_type = frame_type
                     data_object_data['index'] = object_index
                     data_object_data['raw'] = hex(object_int)
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("                         ", end = "")
+                    print(header_data['command_code'])
+                    if self.print_setting == 'Detailed' : 
+                        pprint(data_object_data, indent=13)
                 elif header_data['command_code'] == 'VDM' and object_index == 0:
                     frame_type, data_object_data = decode_vendor_header_data_object(object_int)
                     data_object_type = frame_type
                     data_object_data['index'] = object_index
                     data_object_data['raw'] = hex(object_int)
-                    print(data_object_data['command'], end = "")
+                    if data_object_type == 'structured_header_vdo' : 
+                        if object_index > 0 : 
+                            print("                         ", end = "")
+                        print(data_object_data['command'])
+                        if self.print_setting == 'Detailed' : 
+                            pprint(data_object_data, indent=13)
+                    else:
+                        if self.print_setting == 'Detailed' : 
+                            if object_index > 0 : 
+                                print("                         ", end = "")
+                            print ("VDM: ", data_object_type, hex(object_int))
                 else: 
-                    print(header_data['command_code'], end = "")
+                    if object_index > 0 : 
+                        print("            ", end = "")
+                    print("             VDO", hex(object_int))
                 # TODO: support all vendor requests
                 # TODO: support extended headers, and data blocks
                 next = yield AnalyzerFrame(data_object_type, object_word.start_time, object_word.end_time, data_object_data)
@@ -370,12 +429,8 @@ class Hla(HighLevelAnalyzer):
             crc_word = yield from self.get_bits(next, 40)
             crc_decoded = self.bits_to_bytes(crc_word.data, 4)
             crc_int = int.from_bytes(crc_decoded, "little")
-            # print('crc {crc}'.format(crc=hex(crc_int)))
             if self.print_setting == 'Detailed' : 
-                print()
-                pprint(data_object_data, indent=13)
-            else:
-                print()
+                print('             crc {crc}'.format(crc=hex(crc_int)))
             next = yield AnalyzerFrame('crc', crc_word.start_time, crc_word.end_time, {'crc': hex(crc_int)})
 
     def get_bits(self, first_frame, num_bits):
